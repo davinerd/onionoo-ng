@@ -4,8 +4,9 @@ from tornado.httpclient import AsyncHTTPClient
 from tornado import gen, escape
 from tornado.web import HTTPError
 from datetime import date, timedelta, datetime
-import urllib
 from IPy import IP
+import urllib
+import base64
 
 AsyncHTTPClient.configure(None, max_clients=settings.ASYNC_ES_MAX_CLIENT)
 
@@ -27,7 +28,7 @@ class ES:
         response = yield self.es.get_by_path("/")
 
         if response.code != 200 or not response.body:
-            raise Exception
+            raise EnvironmentError
 
     @gen.coroutine
     def search(self, mapping, query, extras):
@@ -98,6 +99,7 @@ class ES:
 
         result = yield self.es.search(index=self.index, type=self.type_mapping, source=body_query,
                                       size=extra_parameters['limit'])
+
         if result.code != 200 or not result.body:
             raise HTTPError(status_code=result.code)
 
@@ -110,6 +112,35 @@ class ES:
             raise Exception(result.error)
 
         raise gen.Return(return_data)
+
+    @gen.coroutine
+    def get_last_node(self, mapping):
+
+        body_query = {
+            "sort": {
+                "last_seen": {
+                    "unmapped_type": "string", "order": "desc"
+                }
+            },
+            "query": {
+                "match_all": {}
+            }, "from": 0, "_source": ["*"], "size": 1
+        }
+
+        result = yield self.es.search(index=self.index, type=mapping, source=body_query)
+
+        if result.code != 200 or not result.body:
+            raise HTTPError(status_code=result.code)
+
+        result = escape.json_decode(result.body)
+
+        if 'hits' in result and 'hits' in result['hits']:
+            last_seen = result['hits']['hits'][0]['_source']['last_seen']
+        else:
+            # generic error related to ES - shouldn't happen...
+            raise Exception(result.error)
+
+        raise gen.Return(last_seen)
 
     def __parse_query(self, q):
         if 'as' in q:
@@ -154,8 +185,14 @@ class ES:
                 if len(tokenz) == 1:
                     if self.___is_ip(tokenz[0]):
                         new_se.append("(or_address:{0} OR dir_address:{0})".format(tokenz[0]))
+                    elif self.__is_fingerprint(tokenz[0]):
+                        fingerprint = self.__transform_fingerprint(tokenz[0])
+                        if fingerprint[0] == "$":
+                            new_se.append("(fingerprint:{0}* OR hashed_fingerprint:{0}*)".format(fingerprint[1:]))
+                        else:
+                            new_se.append("(fingerprint:*{0}* OR hashed_fingerprint:*{0}*)".format(fingerprint))
                     else:
-                        new_se.append("(nickname:*{0}* OR fingerprint:*{0}* OR hashed_fingerprint:*{0}*)".format(tokenz[0]))
+                        new_se.append("nickname:*{0}*".format(tokenz[0]))
                 else:
                     if tokenz[0] in forbidden_keys:
                         raise HTTPError(status_code=400)
@@ -166,17 +203,24 @@ class ES:
 
         return q
 
-    def __parse_extra(self, extra):
+    @staticmethod
+    def __parse_extra(extra):
         return_data = {'limit': settings.ES_RESULT_SIZE, 'offset': 0, 'fields': ["*"],
                        'sort': {'field': None, 'order': 'asc', 'type': 'string'}}
 
-        if 'limit' in extra and int(extra['limit']) > 0:
-            return_data['limit'] = extra['limit']
-        elif 'limit' in extra and int(extra['limit']) <= 0:
-            return_data['limit'] = 0
+        if 'limit' in extra:
+            # 'limit' cannot go beyond the settings.ES_RESULT_SIZE value
+            if 0 < int(extra['limit']) < settings.ES_RESULT_SIZE:
+                return_data['limit'] = int(extra['limit'])
+            elif int(extra['limit']) <= 0:
+                return_data['limit'] = 0
 
         if 'offset' in extra and int(extra['offset']) > 0:
-            return_data['offset'] = extra['offset']
+            return_data['offset'] = int(extra['offset'])
+
+        # offset + limit must be <= settings.ES_RESULT_SIZE
+        if (return_data['offset'] + return_data['limit']) > settings.ES_RESULT_SIZE:
+            return_data['limit'] -= return_data['offset']
 
         if 'fields' in extra:
             return_data['fields'] = extra['fields'].split(',')
@@ -191,7 +235,8 @@ class ES:
 
         return return_data
 
-    def __extract_range(self, val, field):
+    @staticmethod
+    def __extract_range(val, field):
         drange = val.split('-')
         # malformed range
         if len(drange) > 2:
@@ -240,5 +285,31 @@ class ES:
         try:
             IP(ip)
             return True
-        except Exception:
+        except ValueError:
             return False
+
+    @staticmethod
+    def __is_fingerprint(s):
+        try:
+            # if it's base64 then it's an encoded fingerprint
+            base64.b64decode(s + "==")
+
+            # or it can be an hex string
+            int(s, 16)
+
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def __transform_fingerprint(fingerprint):
+
+        # if it's already hex we don't need to transform it
+        try:
+            int(fingerprint, 16)
+            return fingerprint
+        except ValueError:
+            pass
+
+        # we assume that 'fingerprint' is a valid base64 string
+        return base64.b64decode(fingerprint + "==")

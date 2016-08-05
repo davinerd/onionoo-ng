@@ -1,0 +1,11 @@
+ONIONOO-NG CHANGELOG
+
+
+VERSION 1.1 (05/08/2016)
+- added 'relays_published' and 'bridges_published' values
+- improved support for 'search' parameter
+- fixed a bug about 'offset' parameter (see issue #1)
+- minor style fixes
+
+VERSION 1.0 (03/08/2016)
+- first release: almost totally backward compatible with current Onionoo's protocol

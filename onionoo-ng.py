@@ -3,23 +3,25 @@ from tornado.ioloop import IOLoop
 import settings as ts
 from engines.es import ES
 from tornado import gen
-#from guppy import hpy
-#from timer import Timer
-#from pympler import tracker
+
+
+# from guppy import hpy
+# from timer import Timer
+# from pympler import tracker
 
 # with Timer() as t:
 #   blablabal
 # print "=> elapsed time: %s s" % t.secs
 
-#t = tracker.SummaryTracker()
+# t = tracker.SummaryTracker()
 
-#h = hpy()
-#print h.heap()
+# h = hpy()
+# print h.heap()
 
 class BaseHandler(RequestHandler):
-    #def write_error(self, status_code, **kwargs):
+    # def write_error(self, status_code, **kwargs):
     #    self.set_header('Content-Type', 'text/json')
-    #    self.finish({'code': ts.STATUS_ERROR, 'message': self._reason, 'version': ts.VERSION})
+    #    self.finish({'code': ts.STATUS_ERROR, 'message': self._reason, 'version': ts.PROTOCOL_VERSION})
     pass
 
 
@@ -28,9 +30,9 @@ class APIError(HTTPError):
 
 
 class APIBaseHandler(BaseHandler):
-    #def write_error(self, status_code, **kwargs):
+    # def write_error(self, status_code, **kwargs):
     #    self.set_header('Content-Type', 'text/json')
-    #    self.finish({'code': ts.STATUS_ERROR, 'message': self._reason, 'version': ts.VERSION})
+    #    self.finish({'code': ts.STATUS_ERROR, 'message': self._reason, 'version': ts.PROTOCOL_VERSION})
     pass
 
 
@@ -46,7 +48,7 @@ class APIDetailsHandler(APIBaseHandler):
         query_extra = dict()
         es_index = None
         msg = {
-            'version': ts.VERSION,
+            'version': ts.PROTOCOL_VERSION,
             'relays': [],
             'bridges': [],
             'relays_published': None,
@@ -58,7 +60,8 @@ class APIDetailsHandler(APIBaseHandler):
             query_split = self.request.query.lower().split('&')
             for p in query_split:
                 p_split = p.split('=')
-                if len(p_split) == 1 or (p_split[0] not in ts.OOO_QUERYPARAMS and p_split[0] not in ts.OOO_QUERYPARAMS_EXTRAS):
+                if len(p_split) == 1 or (
+                        p_split[0] not in ts.OOO_QUERYPARAMS and p_split[0] not in ts.OOO_QUERYPARAMS_EXTRAS):
                     # raise APIError(reason="invalid query parameters")
                     raise HTTPError(status_code=400)
 
@@ -73,10 +76,13 @@ class APIDetailsHandler(APIBaseHandler):
             if es_index != "relay" and es_index != "bridge":
                 raise HTTPError(status_code=400)
             # little trick to be consistent with the old protocol
-            msg[es_index+"s"] = yield self.application.es_instance.search(es_index, query_params, query_extra)
+            msg[es_index + "s"] = yield self.application.es_instance.search(es_index, query_params, query_extra)
         else:
             msg['relays'] = yield self.application.es_instance.search("relay", query_params, query_extra)
             msg['bridges'] = yield self.application.es_instance.search("bridge", query_params, query_extra)
+
+        msg['relays_published'] = yield self.application.es_instance.get_last_node("relay")
+        msg['bridges_published'] = yield self.application.es_instance.get_last_node("bridge")
 
         self.write(msg)
         self.finish()
@@ -104,7 +110,7 @@ class App(Application):
 
         try:
             IOLoop.current().run_sync(self.es_instance.check_connection)
-        except Exception:
+        except EnvironmentError:
             print "ERROR: ElasticSearch not running...quitting"
             IOLoop.current().stop()
             exit()
@@ -114,7 +120,7 @@ if __name__ == '__main__':
     try:
         app = App()
         app.listen(ts.LISTENING_PORT)
-        print "Onionoo-ng listening on {0}".format(ts.LISTENING_PORT)
+        print "Onionoo-ng ({0}) listening on {1}".format(ts.VERSION, ts.LISTENING_PORT)
         IOLoop.current().start()
     except KeyboardInterrupt:
         IOLoop.current().stop()
