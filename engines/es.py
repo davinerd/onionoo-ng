@@ -94,8 +94,10 @@ class ES:
         }
 
         if settings.DEBUG:
-            print body_query
-            print extra_parameters
+            print "index: {0}".format(self.index)
+            print "mapping: {0}".format(self.type_mapping)
+            print "body query: {0}".format(body_query)
+            print "extra parameters: {0}".format(extra_parameters)
 
         result = yield self.es.search(index=self.index, type=self.type_mapping, source=body_query,
                                       size=extra_parameters['limit'])
@@ -107,6 +109,8 @@ class ES:
 
         if 'hits' in result and 'hits' in result['hits']:
             return_data = [h['_source'] for h in result['hits']['hits'] if h['_source']]
+            if settings.DEBUG:
+                print "Got {0} results".format(len(return_data))
         else:
             # generic error related to ES - shouldn't happen...
             raise Exception(result.error)
@@ -124,7 +128,7 @@ class ES:
             },
             "query": {
                 "match_all": {}
-            }, "from": 0, "_source": ["*"], "size": 1
+            }, "from": 0, "_source": ["last_seen"], "size": 1
         }
 
         result = yield self.es.search(index=self.index, type=mapping, source=body_query)
