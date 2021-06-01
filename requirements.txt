@@ -24,4 +24,4 @@ six==1.10.0
 tornado==4.4.1
 Tornado-JSON==1.2.2
 tornadoes==2.4.2
-urllib3==1.15.1
+urllib3==1.26.5
